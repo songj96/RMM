@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 0;
+            max-width: 808px; /* 8 raindrops at 101px each */
+            margin: 20px auto;
+            justify-content: center;
+        }
+
+        .raindrop {
+            width: 101px;
+            height: 101px;
+            position: relative;
+            cursor: pointer;
+            margin: 0 auto;
+            transform: scale(1.05);
+            transform-origin: center;
+        }
+
+        .raindrop-image {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .raindrop-animation {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: none;
+        }
+
+        .controls {
+            text-align: center;
+            margin: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .cancel-container {
+            width: 306px;
+            height: 61px;
+            position: relative;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: border-color 0.2s ease;
+        }
+        
+        .cancel-container:hover {
+            border: 3px solid #ffd700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        
+        .cancel-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .metronome-container {
+            width: 306px;
+            height: 61px;
+            position: relative;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: border-color 0.2s ease;
+        }
+        
+        .metronome-container:hover {
+            border: 3px solid #ffd700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        
+        .metronome-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .metronome-sprite {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: none;
+        }
+        
+        .question-container {
+            width: 40px;
+            height: 40px;
+            position: relative;
+            cursor: pointer;
+            margin: 10px auto;
+            border: 3px solid transparent;
+            transition: border-color 0.2s ease;
+            display: flex;
+            justify-content: center;
+        }
+        
+        .question-container:hover {
+            border: 3px solid #ffd700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        
+        .question-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .help-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            display: none;
+        }
+        
+        .help-image {
+            width: 491px;
+            height: 311px;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+    <div style="text-align: center; margin: 20px 0;">
+        <img src="author.png" alt="Author" style="width: 92px; height: 14px; margin-bottom: 10px;">
+        <br>
+        <img src="title.png" alt="Title" style="width: 207px; height: 14px;">
+    </div>
+    <div id="rainGrid" class="grid"></div>
+    <div class="controls">
+        <div id="metronomeContainer" class="metronome-container">
+            <img src="metronome.png" alt="Metronome" class="metronome-image" id="metronomeStatic">
+            <img src="metronomesprite/1.png" alt="Metronome Animation" class="metronome-sprite" id="metronomeSprite">
+        </div>
+        <div id="cancelContainer" class="cancel-container" onclick="cancelAll()">
+            <img src="cancel.png" alt="Cancel" class="cancel-image" id="cancelButton">
+        </div>
+    </div>
+    
+    <div id="questionContainer" class="question-container">
+        <img src="question.png" alt="Help" class="question-image" id="questionButton">
+    </div>
+    
+    <div id="helpPopup" class="help-popup">
+        <img src="help.png" alt="Help Information" class="help-image">
+        <img id="helpCancelContainer" src="helpcancel.png" alt="Close Help" style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); width: 40px; height: 40px; cursor: pointer;">
+    </div>
+
+    <script>
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const LOOP_DURATION = 6000; 
+        const GRID_WIDTH = 8;
+        const GRID_HEIGHT = 6;
+        const SPRITE_FRAMES = 121; // From 35.png to 155.png
+        const STARTING_FRAME = 35; // Start animation from frame 35
+    
+        let startTime = audioContext.currentTime * 1000;
+        
+        const raindrops = Array(GRID_HEIGHT).fill().map(() => Array(GRID_WIDTH).fill(null));
+        const audioBuffers = Array(GRID_HEIGHT).fill().map(() => Array(GRID_WIDTH).fill(null));
+        const raindropAnimations = Array(GRID_HEIGHT).fill().map(() => Array(GRID_WIDTH).fill(null));
+        let metronomeBuffers = [null, null];
+        let metronomeInterval = null;
+        let isMetronomeActive = false;
+        let bpm = 60; // 60 BPM (one full swing takes 2 seconds)
+        let frameCount = 1;
+        let metronomeClick = 1; // Alternates between 1 and 2
+        
+        const metronomeContainer = document.getElementById('metronomeContainer');
+        const metronomeStatic = document.getElementById('metronomeStatic');
+        const metronomeSprite = document.getElementById('metronomeSprite');
+        
+        metronomeContainer.addEventListener('click', toggleMetronome);
+    
+        const grid = document.getElementById('rainGrid');
+        for (let row = 0; row < GRID_HEIGHT; row++) {
+            for (let col = 0; col < GRID_WIDTH; col++) {
+                const raindropContainer = document.createElement('div');
+                raindropContainer.className = 'raindrop';
+                raindropContainer.dataset.row = row;
+                raindropContainer.dataset.col = col;
+                
+                // Static raindrop image
+                const staticImage = document.createElement('img');
+                staticImage.src = 'raindrop.png';
+                staticImage.className = 'raindrop-image';
+                staticImage.id = `raindrop-static-${row}-${col}`;
+                
+                // Animation image (initially hidden)
+                const animationImage = document.createElement('img');
+                animationImage.src = `raindrop-${row}-${col}/${STARTING_FRAME}.png`;
+                animationImage.className = 'raindrop-animation';
+                animationImage.id = `raindrop-animation-${row}-${col}`;
+                animationImage.style.display = 'none';
+                
+                raindropContainer.appendChild(staticImage);
+                raindropContainer.appendChild(animationImage);
+                raindropContainer.addEventListener('click', handleRaindropClick);
+                grid.appendChild(raindropContainer);
+            }
+        }
+    
+        async function loadAudio() {
+            // Load raindrops sounds
+            for (let row = 0; row < GRID_HEIGHT; row++) {
+                for (let col = 0; col < GRID_WIDTH; col++) {
+                    const fileName = `sounds/raindrop-${row}-${col}.mp3`;
+                    try {
+                        const response = await fetch(fileName);
+                        const arrayBuffer = await response.arrayBuffer();
+                        audioBuffers[row][col] = await audioContext.decodeAudioData(arrayBuffer);
+                    } catch (error) {
+                        console.error(`Error loading ${fileName}:`, error);
+                    }
+                }
+            }
+            
+            // Load metronome sounds
+            try {
+                const response1 = await fetch('sounds/metronome1.mp3');
+                const arrayBuffer1 = await response1.arrayBuffer();
+                metronomeBuffers[0] = await audioContext.decodeAudioData(arrayBuffer1);
+                
+                const response2 = await fetch('sounds/metronome2.mp3');
+                const arrayBuffer2 = await response2.arrayBuffer();
+                metronomeBuffers[1] = await audioContext.decodeAudioData(arrayBuffer2);
+            } catch (error) {
+                console.error('Error loading metronome sounds:', error);
+            }
+        }
+
+        let lastPlayedTimes = {};
+        
+        function playRaindropSound(row, col) {
+            if (audioBuffers[row][col]) {
+                const currentTime = audioContext.currentTime * 1000;
+                const key = `${row}-${col}`;
+
+                if (lastPlayedTimes[key] && currentTime - lastPlayedTimes[key] < 100) {
+                    return;
+                }
+
+                lastPlayedTimes[key] = currentTime;
+
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffers[row][col];
+
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 0.8;
+
+                source.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                source.start();
+            }
+        }
+        
+        function playMetronomeSound(clickNumber) {
+            if (metronomeBuffers[clickNumber - 1]) {
+                const source = audioContext.createBufferSource();
+                source.buffer = metronomeBuffers[clickNumber - 1];
+                
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 1.0;
+                
+                source.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                source.start();
+            }
+        }
+    
+        function handleRaindropClick(event) {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+    
+            const raindropEl = event.currentTarget;
+            const row = parseInt(raindropEl.dataset.row);
+            const col = parseInt(raindropEl.dataset.col);
+            const currentLoopTime = (audioContext.currentTime * 1000 - startTime) % LOOP_DURATION;
+    
+            if (raindrops[row][col] === null) {
+                // Activate raindrop
+                raindrops[row][col] = currentLoopTime;
+                
+                // Show animation, hide static
+                const staticImage = document.getElementById(`raindrop-static-${row}-${col}`);
+                const animationImage = document.getElementById(`raindrop-animation-${row}-${col}`);
+                staticImage.style.display = 'none';
+                animationImage.style.display = 'block';
+                
+                // Play sound first
+                playRaindropSound(row, col);
+                
+                // Force initial frame update before starting animation
+                animationImage.src = `raindrop-${row}-${col}/${STARTING_FRAME}.png`;
+                
+                // Small delay to ensure the first frame is displayed correctly
+                setTimeout(() => {
+                    startRaindropAnimation(row, col);
+                }, 10);
+            } else {
+                // Deactivate raindrop
+                raindrops[row][col] = null;
+                
+                // Stop animation, show static
+                const staticImage = document.getElementById(`raindrop-static-${row}-${col}`);
+                const animationImage = document.getElementById(`raindrop-animation-${row}-${col}`);
+                staticImage.style.display = 'block';
+                animationImage.style.display = 'none';
+                
+                // Cancel any running animation
+                if (raindropAnimations[row][col]) {
+                    cancelAnimationFrame(raindropAnimations[row][col]);
+                    raindropAnimations[row][col] = null;
+                }
+            }
+        }
+        
+        function startRaindropAnimation(row, col) {
+            const animationImage = document.getElementById(`raindrop-animation-${row}-${col}`);
+            let frame = STARTING_FRAME;
+            let lastFrameTime = 0;
+            
+            // Calculate timing based on 6 second loop and sprite frame count
+            const frameDuration = LOOP_DURATION / SPRITE_FRAMES;
+            
+            function updateFrame(timestamp) {
+                if (!raindrops[row][col]) return; // Exit if raindrop is no longer active
+                
+                if (!lastFrameTime) lastFrameTime = timestamp;
+                
+                const elapsed = timestamp - lastFrameTime;
+                
+                if (elapsed >= frameDuration) {
+                    // Update to next frame
+                    frame++;
+                    if (frame > STARTING_FRAME + SPRITE_FRAMES - 1) {
+                        frame = STARTING_FRAME; // Loop back to starting frame
+                    }
+                    
+                    // Update image source
+                    animationImage.src = `raindrop-${row}-${col}/${frame}.png`;
+                    
+                    // Reset timer
+                    lastFrameTime = timestamp;
+                }
+                
+                // Continue animation
+                raindropAnimations[row][col] = requestAnimationFrame(updateFrame);
+            }
+            
+            // Ensure we start from the correct frame
+            frame = STARTING_FRAME;
+            animationImage.src = `raindrop-${row}-${col}/${frame}.png`;
+            
+            // Start animation loop with a small delay to ensure the first frame displays correctly
+            raindropAnimations[row][col] = requestAnimationFrame(updateFrame);
+        }
+    
+        function cancelAll() {
+            for (let row = 0; row < GRID_HEIGHT; row++) {
+                for (let col = 0; col < GRID_WIDTH; col++) {
+                    // Reset raindrop state
+                    raindrops[row][col] = null;
+                    
+                    // Cancel any running animations
+                    if (raindropAnimations[row][col]) {
+                        cancelAnimationFrame(raindropAnimations[row][col]);
+                        raindropAnimations[row][col] = null;
+                    }
+                    
+                    // Reset display
+                    const staticImage = document.getElementById(`raindrop-static-${row}-${col}`);
+                    const animationImage = document.getElementById(`raindrop-animation-${row}-${col}`);
+                    
+                    if (staticImage && animationImage) {
+                        staticImage.style.display = 'block';
+                        animationImage.style.display = 'none';
+                    }
+                }
+            }
+        }
+        
+        function toggleMetronome() {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            if (isMetronomeActive) {
+                // Stop metronome
+                clearInterval(metronomeInterval);
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+                metronomeStatic.style.display = 'block';
+                metronomeSprite.style.display = 'none';
+                isMetronomeActive = false;
+                lastFrameTime = 0;
+            } else {
+                // Start metronome
+                metronomeStatic.style.display = 'none';
+                metronomeSprite.style.display = 'block';
+                isMetronomeActive = true;
+                frameCount = 1;
+                metronomeClick = 1;
+                lastFrameTime = 0;
+                animationFrameId = requestAnimationFrame(updateMetronomeFrame);
+                
+                // Calculate interval based on BPM
+                const beatInterval = 60000 / bpm;
+                metronomeInterval = setInterval(updateMetronome, beatInterval);
+                
+                // Play first click immediately
+                playMetronomeSound(metronomeClick);
+            }
+        }
+        
+        function updateMetronome() {
+            // Toggle between click 1 and 2
+            metronomeClick = metronomeClick === 1 ? 2 : 1;
+            
+            // Set starting frame based on which click
+            frameCount = metronomeClick === 1 ? 1 : 21;
+            
+            // Play the corresponding sound
+            playMetronomeSound(metronomeClick);
+            
+            // Start the animation
+            updateMetronomeFrame();
+        }
+        
+        let lastFrameTime = 0;
+        let animationFrameId = null;
+        
+        function updateMetronomeFrame(timestamp) {
+            if (!isMetronomeActive) return;
+            
+            if (!lastFrameTime) lastFrameTime = timestamp;
+            
+            // Calculate elapsed time since last frame
+            const elapsed = timestamp - lastFrameTime;
+            
+            // We want to progress through 20 frames in 1000ms (1 second)
+            // That's one frame every 50ms
+            if (elapsed >= 50) {
+                // Update the sprite image
+                metronomeSprite.src = `metronomesprite/${frameCount}.png`;
+                
+                // Calculate next frame
+                if (metronomeClick === 1) {
+                    // Moving from frame 1 towards 20
+                    frameCount++;
+                    if (frameCount > 20) {
+                        frameCount = 20;
+                    }
+                } else {
+                    // Moving from frame 21 towards 40
+                    frameCount++;
+                    if (frameCount > 40) {
+                        frameCount = 40;
+                    }
+                }
+                
+                // Reset the timer
+                lastFrameTime = timestamp;
+            }
+            
+            // Continue animation until we reach the end of the current sequence
+            if ((metronomeClick === 1 && frameCount < 20) || 
+                (metronomeClick === 2 && frameCount < 40)) {
+                animationFrameId = requestAnimationFrame(updateMetronomeFrame);
+            }
+        }
+    
+        function updateLoop() {
+            const currentLoopTime = (audioContext.currentTime * 1000 - startTime) % LOOP_DURATION;
+    
+            for (let row = 0; row < GRID_HEIGHT; row++) {
+                for (let col = 0; col < GRID_WIDTH; col++) {
+                    const timing = raindrops[row][col];
+    
+                    if (timing !== null) {
+                        const timeDiff = Math.abs(currentLoopTime - timing);
+                        const shouldPlay = timeDiff < 50 || timeDiff > LOOP_DURATION - 50;
+    
+                        if (shouldPlay) {
+                            playRaindropSound(row, col);
+                        }
+                    }
+                }
+            }
+    
+            requestAnimationFrame(updateLoop);
+        }
+        
+        // Help popup functionality
+        const questionContainer = document.getElementById('questionContainer');
+        const helpPopup = document.getElementById('helpPopup');
+        const helpCancelContainer = document.getElementById('helpCancelContainer');
+        
+        questionContainer.addEventListener('click', function() {
+            helpPopup.style.display = 'block';
+        });
+        
+        helpCancelContainer.addEventListener('click', function() {
+            helpPopup.style.display = 'none';
+        });
+    
+        loadAudio().catch(console.error);
+        requestAnimationFrame(updateLoop);
+    </script>
+    
+</body>
+</html>
